@@ -1,8 +1,8 @@
 # Get URL from user
-$url = Read-Host -Prompt "Enter the URL to download"
+$url = (Read-Host -Prompt "Enter the URL to download") -replace '"'
 
 # Get save path from user
-$savePath = Read-Host -Prompt "Enter the save path (e.g., C:\Downloads\file.txt)"
+$savePath = (Read-Host -Prompt "Enter the save path (e.g., C:\Downloads\file.txt)") -replace '"'
 
 # Extract directory from the full path
 $directory = Split-Path -Path $savePath -Parent
