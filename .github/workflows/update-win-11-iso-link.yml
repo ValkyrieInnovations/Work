@@ -28,7 +28,7 @@ jobs:
           
       - name: Get Windows 11 ISO link
         run: |
-          python scripts/get_win11_iso.py
+          python scripts/get-win-11-iso-link.py
         
       - name: Update link file
         run: |
