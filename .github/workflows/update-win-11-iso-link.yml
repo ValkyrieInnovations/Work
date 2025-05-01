@@ -7,504 +7,444 @@ on:
 
 jobs:
   get-windows11-link:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest  # Using Windows runner for better Edge WebDriver support
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
+      - name: Install WebDriver for Edge
+        shell: powershell
+        run: |
+          # Create directory for WebDriver
+          New-Item -Path "C:\WebDriver" -ItemType Directory -Force
           
-      - name: Install Puppeteer and dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
-            libexpat1 libfontconfig1 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 \
-            libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
-            libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
-            ca-certificates fonts-liberation libnss3 lsb-release xdg-utils wget
-          npm install puppeteer axios
-
-      - name: Create scraper script
-        run: |
-          cat > scraper.js << 'EOF'
-          const puppeteer = require('puppeteer');
-          const fs = require('fs');
-          const axios = require('axios');
-          const path = require('path');
-
-          // Function to ensure directory exists
-          const ensureDirectoryExists = (dirPath) => {
-            if (!fs.existsSync(dirPath)) {
-              fs.mkdirSync(dirPath, { recursive: true });
-            }
-          };
-
-          // Directory for screenshots
-          const screenshotDir = path.join(process.cwd(), 'screenshots');
-          ensureDirectoryExists(screenshotDir);
-
-          async function getWindows11DownloadLink() {
-            console.log('Starting Windows 11 download link retrieval');
-            console.log('Working directory:', process.cwd());
-            console.log('Screenshot directory:', screenshotDir);
-
-            const browser = await puppeteer.launch({
-              headless: true,
-              args: [
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--window-size=1280,1024'
-              ]
-            });
-            
-            console.log('Browser launched successfully');
-            
-            try {
-              const page = await browser.newPage();
-              
-              // Set viewport size
-              await page.setViewport({ width: 1280, height: 1024 });
-              
-              // Enable verbose logging
-              page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-              
-              // Take screenshot helper function
-              async function takeScreenshot(name) {
-                const screenshotPath = path.join(screenshotDir, `${name}.png`);
-                console.log(`Taking screenshot: ${screenshotPath}`);
-                await page.screenshot({ path: screenshotPath, fullPage: true });
-                console.log(`Screenshot saved: ${screenshotPath}`);
-                return screenshotPath;
-              }
-              
-              // Navigate to Windows 11 download page
-              console.log('Navigating to Windows 11 download page...');
-              await page.goto('https://www.microsoft.com/en-us/software-download/windows11', { 
-                waitUntil: 'networkidle2',
-                timeout: 60000
-              });
-              
-              console.log('Page loaded successfully');
-              await takeScreenshot('initial-page');
-              
-              // Scroll down to make elements visible
-              console.log('Scrolling down...');
-              await page.evaluate(() => {
-                window.scrollBy(0, 500);
-              });
-              
-              // Alternative approach: directly get the ISO link using a direct URL
-              try {
-                console.log('Attempting to get Windows 11 ISO URL through direct method...');
-                // This approach uses the direct API that the Microsoft website uses
-                const downloadInfoUrl = 'https://www.microsoft.com/en-us/api/controls/contentinclude/html?pageId=a8f8f489-4c7f-463a-9ca6-5cff94d8d041&host=www.microsoft.com&segments=software-download,windows11&query=&action=getskuinformationbyproductedition&sdVersion=2';
-                
-                // Send request to get available options
-                const response = await axios.get(downloadInfoUrl);
-                console.log('API response received');
-                
-                // Log response for debugging
-                fs.writeFileSync(path.join(screenshotDir, 'api-response.txt'), JSON.stringify(response.data, null, 2));
-                
-                // Try to extract direct ISO URL or session info
-                if (response.data && typeof response.data === 'string') {
-                  // Save response for inspection
-                  fs.writeFileSync(path.join(screenshotDir, 'response.html'), response.data);
-                  console.log('Response saved to response.html');
-                }
-                
-                // Continue with UI automation as fallback
-                console.log('Continuing with UI automation approach as fallback');
-              } catch (apiError) {
-                console.log('Direct API method failed, continuing with UI automation:', apiError.message);
-              }
-              
-              // Wait for the dropdown to be available using more reliable selectors
-              console.log('Waiting for product dropdown...');
-              await takeScreenshot('before-dropdown');
-              
-              try {
-                // Wait for any select element to appear
-                await page.waitForSelector('select', { visible: true, timeout: 30000 });
-                
-                // Get all form elements for debugging
-                const formElements = await page.evaluate(() => {
-                  const forms = Array.from(document.querySelectorAll('form'));
-                  const selects = Array.from(document.querySelectorAll('select'));
-                  const inputs = Array.from(document.querySelectorAll('input'));
-                  const buttons = Array.from(document.querySelectorAll('button'));
-                  
-                  return {
-                    forms: forms.map(f => ({ id: f.id, action: f.action })),
-                    selects: selects.map(s => ({ 
-                      id: s.id, 
-                      name: s.name,
-                      options: Array.from(s.options).map(o => ({ value: o.value, text: o.text }))
-                    })),
-                    inputs: inputs.map(i => ({ id: i.id, type: i.type, name: i.name })),
-                    buttons: buttons.map(b => ({ id: b.id, text: b.textContent.trim() }))
-                  };
-                });
-                
-                console.log('Form elements found:', JSON.stringify(formElements, null, 2));
-                fs.writeFileSync(path.join(screenshotDir, 'form-elements.json'), JSON.stringify(formElements, null, 2));
-                
-                // Use a more robust approach to select Windows 11 ISO
-                const selectResult = await page.evaluate(() => {
-                  // Find all visible select elements
-                  const selects = Array.from(document.querySelectorAll('select'))
-                    .filter(el => el.offsetParent !== null);
-                  
-                  if (selects.length === 0) return { success: false, message: 'No visible select elements found' };
-                  
-                  // Try to find the one with Windows options
-                  for (const select of selects) {
-                    const options = Array.from(select.options);
-                    const win11Option = options.find(opt => 
-                      opt.text.includes('Windows 11') && opt.text.includes('multi-edition')
-                    );
-                    
-                    if (win11Option) {
-                      // Found the right select and option
-                      select.value = win11Option.value;
-                      
-                      // Dispatch change event
-                      const event = new Event('change', { bubbles: true });
-                      select.dispatchEvent(event);
-                      
-                      return { 
-                        success: true, 
-                        selectId: select.id || 'unknown-id',
-                        optionValue: win11Option.value,
-                        optionText: win11Option.text
-                      };
-                    }
-                  }
-                  
-                  // If we get here, we couldn't find the right option
-                  return { 
-                    success: false, 
-                    message: 'Could not find Windows 11 option',
-                    availableSelects: selects.map(s => ({
-                      id: s.id,
-                      options: Array.from(s.options).map(o => o.text)
-                    }))
-                  };
-                });
-                
-                console.log('Select result:', selectResult);
-                
-                if (!selectResult.success) {
-                  throw new Error(`Failed to select Windows 11 ISO: ${selectResult.message}`);
-                }
-                
-                await takeScreenshot('after-select');
-                
-                // Wait a moment for any dynamic UI updates
-                await page.waitForTimeout(3000);
-                
-                // Click the Download Now button with more robust approach
-                console.log('Looking for Download button...');
-                const buttonResult = await page.evaluate(() => {
-                  // Find all visible buttons
-                  const buttons = Array.from(document.querySelectorAll('button'))
-                    .filter(el => el.offsetParent !== null);
-                  
-                  console.log('Visible buttons:', buttons.map(b => ({ 
-                    id: b.id, 
-                    text: b.textContent.trim(),
-                    disabled: b.disabled
-                  })));
-                  
-                  // Try to find download button by text content
-                  const downloadBtn = buttons.find(b => 
-                    b.textContent.trim().toLowerCase().includes('download') && 
-                    !b.disabled
-                  );
-                  
-                  if (downloadBtn) {
-                    downloadBtn.click();
-                    return { success: true, buttonText: downloadBtn.textContent.trim() };
-                  }
-                  
-                  return { 
-                    success: false, 
-                    message: 'Could not find download button',
-                    availableButtons: buttons.map(b => b.textContent.trim())
-                  };
-                });
-                
-                console.log('Button click result:', buttonResult);
-                
-                if (!buttonResult.success) {
-                  throw new Error(`Failed to click download button: ${buttonResult.message}`);
-                }
-                
-                // Wait for navigation to language selection
-                console.log('Waiting for language selection page...');
-                await page.waitForNavigation({ timeout: 60000 });
-                await takeScreenshot('language-selection');
-                
-                // Select English (United States)
-                console.log('Selecting language...');
-                const languageResult = await page.evaluate(() => {
-                  const selects = Array.from(document.querySelectorAll('select'))
-                    .filter(el => el.offsetParent !== null);
-                  
-                  if (selects.length === 0) return { success: false, message: 'No language select found' };
-                  
-                  // Find English option in the first visible select
-                  const select = selects[0];
-                  const options = Array.from(select.options);
-                  const englishOption = options.find(opt => 
-                    opt.text.includes('English') && opt.text.includes('United States')
-                  );
-                  
-                  if (englishOption) {
-                    select.value = englishOption.value;
-                    
-                    // Dispatch change event
-                    const event = new Event('change', { bubbles: true });
-                    select.dispatchEvent(event);
-                    
-                    return { success: true, language: englishOption.text };
-                  }
-                  
-                  return { 
-                    success: false, 
-                    message: 'English option not found',
-                    availableOptions: options.map(o => o.text)
-                  };
-                });
-                
-                console.log('Language selection result:', languageResult);
-                
-                if (!languageResult.success) {
-                  throw new Error(`Failed to select language: ${languageResult.message}`);
-                }
-                
-                await takeScreenshot('after-language-select');
-                
-                // Click Confirm button
-                console.log('Clicking Confirm button...');
-                const confirmResult = await page.evaluate(() => {
-                  const buttons = Array.from(document.querySelectorAll('button'))
-                    .filter(el => el.offsetParent !== null);
-                  
-                  const confirmBtn = buttons.find(b => 
-                    b.textContent.trim().toLowerCase() === 'confirm' && 
-                    !b.disabled
-                  );
-                  
-                  if (confirmBtn) {
-                    confirmBtn.click();
-                    return { success: true };
-                  }
-                  
-                  return { 
-                    success: false, 
-                    message: 'Confirm button not found',
-                    availableButtons: buttons.map(b => b.textContent.trim())
-                  };
-                });
-                
-                console.log('Confirm button result:', confirmResult);
-                
-                if (!confirmResult.success) {
-                  throw new Error(`Failed to click confirm button: ${confirmResult.message}`);
-                }
-                
-                // Wait for download page
-                console.log('Waiting for download page...');
-                await page.waitForNavigation({ timeout: 60000 });
-                await takeScreenshot('download-page');
-                
-                // Extract download link
-                console.log('Extracting download link...');
-                const downloadLinkResult = await page.evaluate(() => {
-                  // Look for download button
-                  const buttons = Array.from(document.querySelectorAll('button, a'))
-                    .filter(el => el.offsetParent !== null);
-                  
-                  // Log info about all elements for debugging
-                  console.log('Potential download elements:', buttons.map(b => ({
-                    tag: b.tagName,
-                    id: b.id,
-                    text: b.textContent.trim(),
-                    href: b.href,
-                    value: b.value,
-                    attributes: Array.from(b.attributes).map(a => ({ name: a.name, value: a.value }))
-                  })));
-                  
-                  // Try to find download button
-                  const downloadBtn = buttons.find(b => 
-                    b.textContent.trim().toLowerCase().includes('64-bit download')
-                  );
-                  
-                  if (downloadBtn) {
-                    if (downloadBtn.tagName === 'A' && downloadBtn.href) {
-                      return { success: true, url: downloadBtn.href };
-                    } else if (downloadBtn.tagName === 'BUTTON') {
-                      // For buttons, check various attributes that might contain the URL
-                      if (downloadBtn.value) {
-                        return { success: true, url: downloadBtn.value };
-                      }
-                      
-                      // Check data attributes
-                      for (const attr of downloadBtn.attributes) {
-                        if (attr.name.startsWith('data-') && attr.value.includes('http')) {
-                          return { success: true, url: attr.value };
-                        }
-                      }
-                      
-                      // Save button attributes for inspection
-                      return { 
-                        success: false, 
-                        buttonFound: true,
-                        message: 'Download button found but URL not extractable',
-                        buttonInfo: {
-                          id: downloadBtn.id,
-                          text: downloadBtn.textContent.trim(),
-                          attributes: Array.from(downloadBtn.attributes).map(a => ({ name: a.name, value: a.value }))
-                        }
-                      };
-                    }
-                  }
-                  
-                  // If no specific button found, try to find any download links
-                  const htmlContent = document.documentElement.outerHTML;
-                  return { 
-                    success: false, 
-                    message: 'Download button not found',
-                    htmlSnippet: htmlContent.slice(0, 1000) // First 1000 chars for inspection
-                  };
-                });
-                
-                console.log('Download link result:', downloadLinkResult);
-                
-                if (downloadLinkResult.success) {
-                  return downloadLinkResult.url;
-                } else {
-                  // If we couldn't get the URL directly, save the page content for analysis
-                  const content = await page.content();
-                  fs.writeFileSync(path.join(screenshotDir, 'download-page.html'), content);
-                  
-                  // Try to extract URL from page content
-                  if (content.includes('https://') && content.includes('download')) {
-                    const matches = content.match(/https:\/\/[^"'\s]+download[^"'\s]*/g);
-                    if (matches && matches.length > 0) {
-                      console.log('Found potential download URLs in page content:', matches);
-                      return matches[0]; // Return the first match
-                    }
-                  }
-                  
-                  throw new Error('Could not extract download link');
-                }
-              } catch (error) {
-                console.error('Error during UI automation:', error);
-                
-                // Take a final screenshot of current state
-                await takeScreenshot('error-state');
-                
-                // As a fallback, try to get a known URL pattern for Windows 11
-                // This is not guaranteed to work but might help in some cases
-                return "UI automation failed - see screenshots for debugging";
-              }
-            } catch (error) {
-              console.error('Critical error during scraping:', error);
-              throw error;
-            } finally {
-              await browser.close();
-            }
+          # Get Edge version
+          $edgeVersion = (Get-AppxPackage -Name *Edge*).Version
+          Write-Host "Microsoft Edge version: $edgeVersion"
+          
+          # Download Edge WebDriver that matches the installed Edge version
+          $webDriverUrl = "https://msedgedriver.azureedge.net/$edgeVersion/edgedriver_win64.zip"
+          $webDriverZip = "C:\WebDriver\edgedriver_win64.zip"
+          
+          try {
+            Invoke-WebRequest -Uri $webDriverUrl -OutFile $webDriverZip
+          } catch {
+            # If exact version doesn't work, get the latest stable
+            Write-Host "Could not find exact WebDriver version, falling back to latest stable"
+            $webDriverUrl = "https://msedgedriver.azureedge.net/LATEST_STABLE/edgedriver_win64.zip"
+            Invoke-WebRequest -Uri $webDriverUrl -OutFile $webDriverZip
           }
           
-          // Run the scraper
-          getWindows11DownloadLink()
-            .then(downloadLink => {
-              console.log(`Windows 11 download link: ${downloadLink}`);
-              fs.writeFileSync('windows11_download_link.txt', downloadLink || 'Link not found');
-              // List all screenshots for debugging
-              if (fs.existsSync(screenshotDir)) {
-                console.log('Screenshots created:');
-                fs.readdirSync(screenshotDir).forEach(file => {
-                  console.log(` - ${file}`);
-                });
+          # Extract the WebDriver
+          Expand-Archive -Path $webDriverZip -DestinationPath "C:\WebDriver" -Force
+          
+          # Add WebDriver to PATH
+          echo "C:\WebDriver" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
+          # Verify WebDriver is available
+          $driverPath = "C:\WebDriver\msedgedriver.exe"
+          if (Test-Path $driverPath) {
+            Write-Host "Edge WebDriver installed successfully at: $driverPath"
+          } else {
+            Write-Host "Error: Edge WebDriver not found"
+            exit 1
+          }
+      
+      - name: Install Selenium PowerShell Module
+        shell: powershell
+        run: |
+          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Selenium -Force -AllowClobber
+          Write-Host "Selenium PowerShell module installed successfully"
+      
+      - name: Execute Selenium Script to Get Windows 11 Download Link
+        shell: powershell
+        run: |
+          $scriptContent = @'
+          # PowerShell script to get Windows 11 download link using Selenium
+          
+          # Import the Selenium module
+          Import-Module Selenium
+          
+          # Set up logging
+          function Write-Log {
+              param([string]$message)
+              $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+              Write-Host "$timestamp - $message"
+          }
+          
+          Write-Log "Starting Windows 11 download link retrieval"
+          
+          try {
+              # Set up Edge options for headless mode
+              $edgeOptions = New-Object OpenQA.Selenium.Edge.EdgeOptions
+              $edgeOptions.AddArgument('--headless')
+              $edgeOptions.AddArgument('--no-sandbox')
+              $edgeOptions.AddArgument('--disable-dev-shm-usage')
+              $edgeOptions.AddArgument('--disable-gpu')
+              $edgeOptions.AddArgument('--window-size=1920,1080')
+              
+              # Launch Edge in headless mode
+              Write-Log "Starting Edge WebDriver in headless mode"
+              $driver = New-Object OpenQA.Selenium.Edge.EdgeDriver($edgeOptions)
+              
+              # Set an implicit wait to give elements time to load
+              $driver.Manage().Timeouts().ImplicitWait = [TimeSpan]::FromSeconds(10)
+              
+              # Navigate to the Windows 11 download page
+              $url = "https://www.microsoft.com/en-us/software-download/windows11"
+              Write-Log "Navigating to: $url"
+              $driver.Navigate().GoToUrl($url)
+              
+              # Wait for page to load
+              Start-Sleep -Seconds 5
+              
+              # Scroll down to make the dropdown visible
+              Write-Log "Scrolling down to make elements visible"
+              $driver.ExecuteScript("window.scrollBy(0, 500)")
+              Start-Sleep -Seconds 2
+              
+              # Find and interact with the select dropdown
+              try {
+                  Write-Log "Looking for the product selection dropdown"
+                  $selectElements = $driver.FindElements([OpenQA.Selenium.By]::TagName("select"))
+                  
+                  if ($selectElements.Count -eq 0) {
+                      throw "No select elements found on the page"
+                  }
+                  
+                  Write-Log "Found $($selectElements.Count) select elements"
+                  
+                  # Select the first dropdown (product selection)
+                  $selectElement = $selectElements[0]
+                  $select = [OpenQA.Selenium.Support.UI.SelectElement]::new($selectElement)
+                  
+                  # Find and select the Windows 11 option
+                  $options = $select.Options
+                  
+                  Write-Log "Available options:"
+                  foreach ($option in $options) {
+                      Write-Log "  - $($option.Text)"
+                  }
+                  
+                  $win11Option = $options | Where-Object { $_.Text -like "*Windows 11*" -and $_.Text -like "*multi-edition*" -and $_.Text -like "*x64*" }
+                  
+                  if ($win11Option) {
+                      Write-Log "Selecting option: $($win11Option.Text)"
+                      $select.SelectByText($win11Option.Text)
+                      Start-Sleep -Seconds 3
+                  } else {
+                      throw "Windows 11 x64 option not found in dropdown"
+                  }
+                  
+                  # Find and click the Download button
+                  Write-Log "Looking for the Download button"
+                  $downloadButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), 'Download')]"))
+                  
+                  if ($downloadButtons.Count -eq 0) {
+                      throw "Download button not found"
+                  }
+                  
+                  Write-Log "Clicking Download button"
+                  $downloadButtons[0].Click()
+                  Start-Sleep -Seconds 3
+                  
+                  # Select language (English United States)
+                  Write-Log "Looking for language dropdown"
+                  $languageSelects = $driver.FindElements([OpenQA.Selenium.By]::TagName("select"))
+                  
+                  if ($languageSelects.Count -eq 0) {
+                      throw "Language dropdown not found"
+                  }
+                  
+                  $languageSelect = [OpenQA.Selenium.Support.UI.SelectElement]::new($languageSelects[0])
+                  
+                  # Find and select English (United States)
+                  $engOption = $languageSelect.Options | Where-Object { $_.Text -like "*English*" -and $_.Text -like "*United States*" }
+                  
+                  if ($engOption) {
+                      Write-Log "Selecting language: $($engOption.Text)"
+                      $languageSelect.SelectByText($engOption.Text)
+                      Start-Sleep -Seconds 3
+                  } else {
+                      throw "English (United States) option not found"
+                  }
+                  
+                  # Click the Confirm button
+                  Write-Log "Looking for Confirm button"
+                  $confirmButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), 'Confirm')]"))
+                  
+                  if ($confirmButtons.Count -eq 0) {
+                      throw "Confirm button not found"
+                  }
+                  
+                  Write-Log "Clicking Confirm button"
+                  $confirmButtons[0].Click()
+                  Start-Sleep -Seconds 5
+                  
+                  # Find the 64-bit download button and get its URL
+                  Write-Log "Looking for 64-bit download button"
+                  $downloadLink = $null
+                  
+                  # Try a few different ways to locate the download button/link
+                  $downloadButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), '64-bit Download')]"))
+                  
+                  if ($downloadButtons.Count -gt 0) {
+                      $downloadButton = $downloadButtons[0]
+                      
+                      # Try to get the URL from button value
+                      $downloadLink = $downloadButton.GetAttribute("value")
+                      Write-Log "Found download button with value attribute: $downloadLink"
+                      
+                      # If value attribute doesn't contain a URL, try other attributes
+                      if (-not ($downloadLink -like "https://*")) {
+                          $downloadLink = $downloadButton.GetAttribute("data-url")
+                          Write-Log "Tried data-url attribute: $downloadLink"
+                      }
+                      
+                      # If still no valid URL, try to click the button and catch the navigation
+                      if (-not ($downloadLink -like "https://*")) {
+                          Write-Log "No direct URL found on button. Attempting to click and monitor network"
+                          
+                          # Use JavaScript to extract network requests
+                          $script = @"
+                          let downloadUrl = null;
+                          
+                          // Create a MutationObserver to watch for changes
+                          const observer = new MutationObserver(mutations => {
+                              for (let mutation of mutations) {
+                                  if (mutation.type === 'attributes' && mutation.attributeName === 'href') {
+                                      const link = mutation.target;
+                                      if (link.href && link.href.startsWith('https://') && link.href.includes('download.microsoft.com')) {
+                                          downloadUrl = link.href;
+                                      }
+                                  }
+                              }
+                          });
+                          
+                          // Start observing the document
+                          observer.observe(document, { 
+                              attributes: true, 
+                              childList: true, 
+                              subtree: true 
+                          });
+                          
+                          // Click the download button
+                          document.querySelector('button[id*="64-bit-download"]').click();
+                          
+                          // Wait a moment to capture the URL
+                          setTimeout(() => {
+                              observer.disconnect();
+                          }, 2000);
+                          
+                          return downloadUrl;
+                          "@
+                          
+                          # Execute the JavaScript and wait for result
+                          $downloadLink = $driver.ExecuteScript($script)
+                          Start-Sleep -Seconds 3
+                          
+                          Write-Log "JavaScript method result: $downloadLink"
+                      }
+                  }
+                  
+                  # If we still don't have a link, try to find it in the page HTML
+                  if (-not ($downloadLink -like "https://*")) {
+                      Write-Log "Attempting to extract link from page source"
+                      $pageSource = $driver.PageSource
+                      
+                      # Look for download URLs in the page source
+                      $matches = [regex]::Matches($pageSource, 'https://[^"\''\s]+download[^"\''\s]*')
+                      
+                      if ($matches.Count -gt 0) {
+                          foreach ($match in $matches) {
+                              $potentialLink = $match.Value
+                              if ($potentialLink -like "*download.microsoft.com*" -or 
+                                  $potentialLink -like "*software-download.microsoft.com*" -or
+                                  $potentialLink -like "*software-static.download.prss.microsoft.com*") {
+                                  $downloadLink = $potentialLink
+                                  Write-Log "Found potential download link in page source: $downloadLink"
+                                  break
+                              }
+                          }
+                      }
+                  }
+                  
+                  # Save the download link to a file
+                  if ($downloadLink -like "https://*") {
+                      Write-Log "Successfully retrieved Windows 11 download link: $downloadLink"
+                      $downloadLink | Out-File -FilePath "windows11_download_link.txt"
+                      Write-Host "::set-output name=download_link::$downloadLink"
+                  } else {
+                      throw "Could not retrieve a valid download link"
+                  }
+                  
+              } catch {
+                  Write-Log "Error during dropdown interaction: $_"
+                  # Take screenshot for debugging
+                  $driver.GetScreenshot().SaveAsFile("error_screenshot.png")
+                  throw $_
               }
-            })
-            .catch(error => {
-              console.error('Scraper failed:', error);
-              // Create a basic error file even when failing
-              fs.writeFileSync('windows11_download_link.txt', 'Error: ' + error.message);
-              // Exit with success to prevent GitHub action from failing
-              // We'll handle this in the next step
-              process.exit(0);
-            });
-          EOF
-
-      - name: Run scraper
-        id: run-scraper
-        run: node scraper.js
-        
-      - name: Upload screenshot artifacts
-        if: always()
+              
+          } catch {
+              Write-Log "Error: $_"
+              if ($driver -ne $null) {
+                  $driver.GetScreenshot().SaveAsFile("error_screenshot.png")
+              }
+              throw
+          } finally {
+              # Always close the driver
+              if ($driver -ne $null) {
+                  $driver.Quit()
+                  $driver.Dispose()
+              }
+              Write-Log "Script execution completed"
+          }
+          '@
+          
+          Set-Content -Path ".\get_windows11_link.ps1" -Value $scriptContent
+          
+          # Execute the script
+          .\get_windows11_link.ps1
+      
+      - name: Upload screenshot if error
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots
-          path: screenshots
-          if-no-files-found: warn
-            
-      - name: Check results and update repository
+          name: error-screenshots
+          path: error_screenshot.png
+          if-no-files-found: ignore
+      
+      - name: Update repository with download link
         run: |
-          if [ -f windows11_download_link.txt ]; then
-            LINK_CONTENT=$(cat windows11_download_link.txt)
-            echo "Download link content: $LINK_CONTENT"
+          if (Test-Path "windows11_download_link.txt") {
+            $downloadLink = Get-Content "windows11_download_link.txt"
             
-            # Only commit if it appears to be a valid link
-            if [[ $LINK_CONTENT == http* || $LINK_CONTENT == "UI automation failed"* ]]; then
+            if ($downloadLink -like "https://*") {
+              Write-Host "Successfully retrieved Windows 11 download link: $downloadLink"
+              
+              # Configure Git
               git config --global user.name "GitHub Actions Bot"
               git config --global user.email "actions@github.com"
+              
+              # Add, commit and push changes
               git add windows11_download_link.txt
-              git commit -m "Update Windows 11 download link" || echo "No changes to commit"
+              git commit -m "Update Windows 11 download link" -m "Automated update via GitHub Actions"
               git push
-              echo "Repository updated successfully"
-            else
-              echo "Link does not appear to be valid, not committing to repository"
-              # Don't exit with error as we want to continue to debugging artifacts
-            fi
-          else
-            echo "Download link file missing"
-            # Don't exit with error as we want to continue to debugging artifacts
-          fi
+              
+              # Create a PowerShell script to use the link
+              $helperScript = @"
+          # Windows 11 Download Helper Script
+          # Generated by GitHub Action on $(Get-Date -Format "yyyy-MM-dd")
           
-      - name: Create result summary
-        if: always()
-        run: |
-          echo "## Windows 11 Download Link Retrieval Results" > $GITHUB_STEP_SUMMARY
+          # The following link is valid for approximately 24 hours:
+          `$downloadURL = "$downloadLink"
           
-          if [ -f windows11_download_link.txt ]; then
-            LINK_CONTENT=$(cat windows11_download_link.txt)
-            echo "### Link Content" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            echo "$LINK_CONTENT" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### Error" >> $GITHUB_STEP_SUMMARY
-            echo "No link file was created" >> $GITHUB_STEP_SUMMARY
-          fi
+          # Validate URL is still valid
+          try {
+              `$request = [System.Net.WebRequest]::Create(`$downloadURL)
+              `$request.Method = "HEAD"
+              `$response = `$request.GetResponse()
+              
+              if (`$response.StatusCode -eq "OK") {
+                  Write-Host "Link is valid. You can download Windows 11 ISO using this URL."
+                  `$response.Close()
+              } else {
+                  Write-Host "Link appears to be expired. Please generate a new link."
+                  `$response.Close()
+                  exit 1
+              }
+          } catch {
+              Write-Host "Link appears to be expired or invalid: `$(`$_.Exception.Message)"
+              Write-Host "Please generate a new link using the GitHub Action."
+              exit 1
+          }
           
-          echo "### Screenshots" >> $GITHUB_STEP_SUMMARY
-          if [ -d "screenshots" ] && [ "$(ls -A screenshots)" ]; then
-            echo "The following debugging screenshots were captured:" >> $GITHUB_STEP_SUMMARY
-            for file in screenshots/*; do
-              echo "- $(basename "$file")" >> $GITHUB_STEP_SUMMARY
-            done
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "Download the screenshots artifact for debugging." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "No screenshots were captured during the run." >> $GITHUB_STEP_SUMMARY
-          fi
+          # Ask user if they want to download the ISO
+          `$downloadISO = Read-Host "Do you want to download Windows 11 ISO now? (Y/N)"
+          
+          if (`$downloadISO -eq "Y" -or `$downloadISO -eq "y") {
+              `$outputPath = "`$env:USERPROFILE\Downloads\Windows11.iso"
+              
+              # Ask if user wants to change default path
+              `$changePath = Read-Host "Default download location is: `$outputPath. Change? (Y/N)"
+              
+              if (`$changePath -eq "Y" -or `$changePath -eq "y") {
+                  `$outputPath = Read-Host "Enter new path (including filename.iso)"
+              }
+              
+              # Create directory if it doesn't exist
+              `$outputDir = Split-Path -Parent `$outputPath
+              if (!(Test-Path `$outputDir)) {
+                  New-Item -Path `$outputDir -ItemType Directory -Force | Out-Null
+              }
+              
+              # Download the ISO
+              Write-Host "Downloading Windows 11 ISO to: `$outputPath"
+              Write-Host "This may take a while depending on your internet connection..."
+              
+              try {
+                  # Using .NET webclient for better progress reporting
+                  `$webClient = New-Object System.Net.WebClient
+                  `$webClient.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                  
+                  # Add progress reporting
+                  `$totalBytes = 0
+                  `$receivedBytes = 0
+                  
+                  `$webClient.DownloadFileCompleted += { 
+                      Write-Host "`nDownload completed! File saved to: `$outputPath" 
+                  }
+                  
+                  `$webClient.DownloadProgressChanged += { 
+                      param(`$sender, `$e)
+                      if (`$totalBytes -eq 0) { `$totalBytes = `$e.TotalBytesToReceive }
+                      `$receivedBytes = `$e.BytesReceived
+                      `$percent = `$e.ProgressPercentage
+                      `$downloadedMB = [Math]::Round(`$receivedBytes / 1MB, 2)
+                      `$totalMB = [Math]::Round(`$totalBytes / 1MB, 2)
+                      
+                      Write-Progress -Activity "Downloading Windows 11 ISO" -Status "`$downloadedMB MB of `$totalMB MB" -PercentComplete `$percent
+                  }
+                  
+                  `$webClient.DownloadFileAsync((New-Object System.Uri(`$downloadURL)), `$outputPath)
+                  
+                  # Wait until download completes
+                  while (`$webClient.IsBusy) {
+                      Start-Sleep -Milliseconds 500
+                  }
+                  
+                  Write-Host "Windows 11 ISO download completed successfully!"
+                  Write-Host "File saved to: `$outputPath"
+              }
+              catch {
+                  Write-Error "Error downloading file: `$(`$_.Exception.Message)"
+                  exit 1
+              }
+          } else {
+              Write-Host "Download canceled. You can download later using the URL above."
+          }
+          "@
+              
+              Set-Content -Path "download_windows11.ps1" -Value $helperScript
+              
+              # Add the helper script to the repo
+              git add download_windows11.ps1
+              git commit -m "Update Windows 11 download helper script" -m "Automated update via GitHub Actions"
+              git push
+            } else {
+              Write-Host "Error: Retrieved link does not appear to be valid: $downloadLink"
+              exit 1
+            }
+          } else {
+            Write-Host "Error: windows11_download_link.txt file not found"
+            exit 1
+          }
+      
+      - name: Upload helper script as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows11-Download-Helper
+          path: download_windows11.ps1
+          if-no-files-found: warn
