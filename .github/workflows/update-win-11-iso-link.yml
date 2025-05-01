@@ -1,39 +1,114 @@
-name: Update Windows 11 ISO Link
+name: Get Windows 11 Download Link
 
 on:
   schedule:
-    - cron: '0 0 * * *'  # Run daily at midnight UTC
-  workflow_dispatch:     # Allow manual triggers
+    - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight UTC
+  workflow_dispatch:     # Allow manual trigger
 
 jobs:
-  update-link:
+  get-windows11-link:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-          
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install selenium webdriver-manager
-          
-      - name: Install Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-          
-      - name: Get Windows 11 ISO link
-        run: |
-          python scripts/get-win-11-iso-link.py
+      - name: Checkout code
+        uses: actions/checkout@v3
         
-      - name: Update link file
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          
+      - name: Install Puppeteer
+        run: npm install puppeteer
+        
+      - name: Run scraper script
+        id: scraper
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const puppeteer = require('puppeteer');
+            
+            async function getWindows11DownloadLink() {
+              const browser = await puppeteer.launch({
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+              });
+              
+              try {
+                const page = await browser.newPage();
+                console.log('Navigating to Windows 11 download page...');
+                await page.goto('https://www.microsoft.com/en-us/software-download/windows11', { waitUntil: 'networkidle2' });
+                
+                // Scroll down to the dropdown
+                console.log('Scrolling to dropdown...');
+                await page.evaluate(() => window.scrollBy(0, 500));
+                
+                // Wait for the dropdown to be available and select Windows 11 ISO
+                console.log('Selecting Windows 11 ISO option...');
+                await page.waitForSelector('select[id*="product-edition"]');
+                await page.select('select[id*="product-edition"]', 'Windows 11 (multi-edition ISO for x64 devices)');
+                
+                // Click Download Now button
+                console.log('Clicking Download Now...');
+                await page.waitForSelector('button[id*="submit-product-edition"]');
+                await page.click('button[id*="submit-product-edition"]');
+                
+                // Wait for language selection page to load
+                console.log('Waiting for language selection...');
+                await page.waitForSelector('select[id*="product-languages"]', { timeout: 30000 });
+                
+                // Select English (United States)
+                console.log('Selecting English (United States)...');
+                await page.select('select[id*="product-languages"]', 'English (United States)');
+                
+                // Click Confirm button
+                console.log('Clicking Confirm...');
+                await page.waitForSelector('button[id*="submit-sku"]');
+                await page.click('button[id*="submit-sku"]');
+                
+                // Wait for download page to load
+                console.log('Waiting for download page...');
+                await page.waitForSelector('button[id*="64-bit-download"]', { timeout: 30000 });
+                
+                // Get the download link
+                console.log('Extracting download link...');
+                const downloadLink = await page.evaluate(() => {
+                  const downloadButton = document.querySelector('button[id*="64-bit-download"]');
+                  return downloadButton.getAttribute('value');
+                });
+                
+                console.log('Download link retrieved successfully');
+                return downloadLink;
+              } catch (error) {
+                console.error('Error during scraping:', error);
+                throw error;
+              } finally {
+                await browser.close();
+              }
+            }
+            
+            const downloadLink = await getWindows11DownloadLink();
+            console.log(`Windows 11 download link: ${downloadLink}`);
+            
+            // Write the link to a file
+            const fs = require('fs');
+            fs.writeFileSync('windows11_download_link.txt', downloadLink);
+            
+            // Set output for use in other steps
+            return downloadLink;
+            
+      - name: Update link in repository
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add win11_iso_link.txt
-          git commit -m "Update Windows 11 ISO link" || echo "No changes to commit"
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git add windows11_download_link.txt
+          git commit -m "Update Windows 11 download link" || echo "No changes to commit"
           git push
+          
+      - name: Set output
+        id: set-link
+        run: echo "::set-output name=download_link::$(cat windows11_download_link.txt)"
+        
+      - name: Output download link
+        run: |
+          echo "Windows 11 download link has been updated."
+          echo "Link: ${{ steps.set-link.outputs.download_link }}"
