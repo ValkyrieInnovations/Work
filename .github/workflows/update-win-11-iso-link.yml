@@ -1,5 +1,8 @@
 name: Get Windows 11 Download Link
 
+permissions:
+  contents: write
+
 on:
   schedule:
     - cron: '0 0 * * 0'  # Run weekly on Sunday at midnight UTC
