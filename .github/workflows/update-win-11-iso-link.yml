@@ -17,98 +17,401 @@ jobs:
         with:
           node-version: '18'
           
-      - name: Install Puppeteer
-        run: npm install puppeteer
-        
-      - name: Run scraper script
-        id: scraper
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const puppeteer = require('puppeteer');
+      - name: Install Puppeteer and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gconf-service libasound2 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 \
+            libexpat1 libfontconfig1 libgcc1 libgconf-2-4 libgdk-pixbuf2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 \
+            libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
+            libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxss1 libxtst6 \
+            ca-certificates fonts-liberation libappindicator1 libnss3 lsb-release xdg-utils wget
+          npm install puppeteer
+
+      - name: Create scraper script
+        run: |
+          cat > scraper.js << 'EOF'
+          const puppeteer = require('puppeteer');
+          const fs = require('fs');
+
+          async function getWindows11DownloadLink() {
+            const browser = await puppeteer.launch({
+              headless: true,
+              args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--disable-gpu'
+              ],
+              defaultViewport: {width: 1200, height: 800}
+            });
             
-            async function getWindows11DownloadLink() {
-              const browser = await puppeteer.launch({
-                headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
+            console.log('Browser launched successfully');
+            
+            try {
+              const page = await browser.newPage();
+              
+              // Enable more verbose logging for debugging
+              page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+              
+              // Navigate to Windows 11 download page with longer timeout
+              console.log('Navigating to Windows 11 download page...');
+              await page.goto('https://www.microsoft.com/en-us/software-download/windows11', { 
+                waitUntil: 'networkidle2',
+                timeout: 60000
               });
               
+              console.log('Page loaded successfully');
+              
+              // Wait for page content to fully load
+              await page.waitForSelector('body', { visible: true });
+              
+              // Scroll down to make elements visible
+              console.log('Scrolling down to reveal dropdown...');
+              await page.evaluate(() => {
+                window.scrollBy(0, 500);
+              });
+              
+              // Wait for the dropdown to be available - using more general selector
+              console.log('Waiting for product dropdown...');
+              await page.waitForSelector('select', { visible: true, timeout: 30000 });
+              
+              // Get all selects on the page to ensure we're targeting the right one
+              const selectElements = await page.$$('select');
+              console.log(`Found ${selectElements.length} select elements on the page`);
+              
+              // Select Windows 11 ISO from dropdown - try multiple selector patterns
+              console.log('Selecting Windows 11 ISO option...');
+              
+              // First attempt with select element
               try {
-                const page = await browser.newPage();
-                console.log('Navigating to Windows 11 download page...');
-                await page.goto('https://www.microsoft.com/en-us/software-download/windows11', { waitUntil: 'networkidle2' });
+                await page.select('select', 'Windows 11 (multi-edition ISO for x64 devices)');
+                console.log('Selected Windows 11 ISO using simple select');
+              } catch (err) {
+                console.log('First selection method failed, trying alternative:', err.message);
                 
-                // Scroll down to the dropdown
-                console.log('Scrolling to dropdown...');
-                await page.evaluate(() => window.scrollBy(0, 500));
-                
-                // Wait for the dropdown to be available and select Windows 11 ISO
-                console.log('Selecting Windows 11 ISO option...');
-                await page.waitForSelector('select[id*="product-edition"]');
-                await page.select('select[id*="product-edition"]', 'Windows 11 (multi-edition ISO for x64 devices)');
-                
-                // Click Download Now button
-                console.log('Clicking Download Now...');
-                await page.waitForSelector('button[id*="submit-product-edition"]');
-                await page.click('button[id*="submit-product-edition"]');
-                
-                // Wait for language selection page to load
-                console.log('Waiting for language selection...');
-                await page.waitForSelector('select[id*="product-languages"]', { timeout: 30000 });
-                
-                // Select English (United States)
-                console.log('Selecting English (United States)...');
-                await page.select('select[id*="product-languages"]', 'English (United States)');
-                
-                // Click Confirm button
-                console.log('Clicking Confirm...');
-                await page.waitForSelector('button[id*="submit-sku"]');
-                await page.click('button[id*="submit-sku"]');
-                
-                // Wait for download page to load
-                console.log('Waiting for download page...');
-                await page.waitForSelector('button[id*="64-bit-download"]', { timeout: 30000 });
-                
-                // Get the download link
-                console.log('Extracting download link...');
-                const downloadLink = await page.evaluate(() => {
-                  const downloadButton = document.querySelector('button[id*="64-bit-download"]');
-                  return downloadButton.getAttribute('value');
+                // Try to find the exact select element with a dynamic approach
+                const selectOptions = await page.evaluate(() => {
+                  const selects = Array.from(document.querySelectorAll('select'));
+                  return selects.map(select => {
+                    return {
+                      id: select.id,
+                      options: Array.from(select.options).map(opt => ({
+                        value: opt.value,
+                        text: opt.text
+                      }))
+                    };
+                  });
                 });
                 
-                console.log('Download link retrieved successfully');
-                return downloadLink;
-              } catch (error) {
-                console.error('Error during scraping:', error);
-                throw error;
-              } finally {
-                await browser.close();
+                console.log('Available select elements:', JSON.stringify(selectOptions, null, 2));
+                
+                // Try to find the select with Windows 11 options
+                for (const select of selectOptions) {
+                  const win11Option = select.options.find(opt => 
+                    opt.text.includes('Windows 11') && opt.text.includes('multi-edition')
+                  );
+                  
+                  if (win11Option) {
+                    console.log(`Found Windows 11 option in select with ID: ${select.id}`);
+                    await page.select(`#${select.id}`, win11Option.value);
+                    break;
+                  }
+                }
               }
+              
+              // Sleep briefly to ensure selection is processed
+              await new Promise(r => setTimeout(r, 2000));
+              
+              // Look for and click the Download Now button - try multiple approaches
+              console.log('Looking for Download Now button...');
+              
+              try {
+                // Take a screenshot for debugging
+                await page.screenshot({ path: 'page-before-download.png' });
+                
+                // Try to find the button using various selectors
+                const downloadButton = await page.evaluate(() => {
+                  // Try multiple ways to find the button
+                  const buttons = Array.from(document.querySelectorAll('button'));
+                  
+                  // Log all buttons for debugging
+                  console.log('Available buttons:', 
+                    buttons.map(b => ({
+                      id: b.id,
+                      text: b.textContent.trim(),
+                      isVisible: b.offsetWidth > 0 && b.offsetHeight > 0
+                    }))
+                  );
+                  
+                  // Look for Download Now button
+                  const downloadBtn = buttons.find(b => 
+                    b.textContent.trim().toLowerCase().includes('download now') && 
+                    b.offsetWidth > 0 && b.offsetHeight > 0
+                  );
+                  
+                  if (downloadBtn) {
+                    console.log('Found Download Now button:', downloadBtn.id);
+                    downloadBtn.click();
+                    return true;
+                  }
+                  
+                  return false;
+                });
+                
+                if (!downloadButton) {
+                  throw new Error('Download button not found or not clickable');
+                }
+                
+                console.log('Download Now button clicked');
+              } catch (err) {
+                console.log('Error clicking Download Now button:', err.message);
+                throw err;
+              }
+              
+              // Wait for language selection page to load
+              console.log('Waiting for language selection...');
+              await page.waitForSelector('select', { 
+                visible: true, 
+                timeout: 45000 
+              });
+              
+              // Take a screenshot of language selection page
+              await page.screenshot({ path: 'language-selection.png' });
+              
+              // Select English (United States) using a more robust approach
+              console.log('Selecting English (United States)...');
+              try {
+                // Find selects on this page
+                const langSelects = await page.$$('select');
+                console.log(`Found ${langSelects.length} select elements on language page`);
+                
+                // Get all available language options
+                const langOptions = await page.evaluate(() => {
+                  const selects = Array.from(document.querySelectorAll('select'));
+                  return selects.map(select => {
+                    return {
+                      id: select.id,
+                      options: Array.from(select.options).map(opt => ({
+                        value: opt.value,
+                        text: opt.text
+                      }))
+                    };
+                  });
+                });
+                
+                console.log('Language options:', JSON.stringify(langOptions, null, 2));
+                
+                // Find and select English
+                let languageSelected = false;
+                for (const select of langOptions) {
+                  const engOption = select.options.find(opt => 
+                    opt.text.includes('English') && opt.text.includes('United States')
+                  );
+                  
+                  if (engOption) {
+                    console.log(`Found English option in select with ID: ${select.id}`);
+                    await page.select(`#${select.id}`, engOption.value);
+                    languageSelected = true;
+                    break;
+                  }
+                }
+                
+                if (!languageSelected) {
+                  // Fallback to first select if specific option not found
+                  await page.select('select', 'English (United States)');
+                }
+              } catch (err) {
+                console.log('Error selecting language:', err.message);
+                throw err;
+              }
+              
+              // Sleep to ensure selection is processed
+              await new Promise(r => setTimeout(r, 2000));
+              
+              // Click Confirm button using a more robust approach
+              console.log('Looking for Confirm button...');
+              
+              try {
+                // Take a screenshot before clicking confirm
+                await page.screenshot({ path: 'before-confirm.png' });
+                
+                // Try multiple approaches to find and click the Confirm button
+                const confirmClicked = await page.evaluate(() => {
+                  // Try various ways to identify the confirm button
+                  const buttons = Array.from(document.querySelectorAll('button'));
+                  
+                  // Log all buttons
+                  console.log('Available buttons on language page:', 
+                    buttons.map(b => ({
+                      id: b.id,
+                      text: b.textContent.trim(),
+                      isVisible: b.offsetWidth > 0 && b.offsetHeight > 0
+                    }))
+                  );
+                  
+                  // Look for Confirm button
+                  const confirmBtn = buttons.find(b => 
+                    b.textContent.trim().toLowerCase() === 'confirm' && 
+                    b.offsetWidth > 0 && b.offsetHeight > 0
+                  );
+                  
+                  if (confirmBtn) {
+                    console.log('Found Confirm button:', confirmBtn.id);
+                    confirmBtn.click();
+                    return true;
+                  }
+                  
+                  return false;
+                });
+                
+                if (!confirmClicked) {
+                  throw new Error('Confirm button not found or not clickable');
+                }
+                
+                console.log('Confirm button clicked');
+              } catch (err) {
+                console.log('Error clicking Confirm button:', err.message);
+                throw err;
+              }
+              
+              // Wait for download page to load with increased timeout
+              console.log('Waiting for download page...');
+              await page.waitForNavigation({ 
+                waitUntil: 'networkidle2',
+                timeout: 60000 
+              });
+              
+              // Take a screenshot of final download page
+              await page.screenshot({ path: 'download-page.png' });
+              
+              // Look for 64-bit download button using multiple approaches
+              console.log('Looking for 64-bit download button...');
+              
+              let downloadLink = null;
+              
+              try {
+                // Try to find the download button using various selectors
+                downloadLink = await page.evaluate(() => {
+                  // Log all buttons for debugging
+                  const buttons = Array.from(document.querySelectorAll('button, a'));
+                  console.log('Available download elements:', 
+                    buttons.map(b => ({
+                      id: b.id,
+                      text: b.textContent.trim(),
+                      href: b.href || null,
+                      value: b.value || null,
+                      isVisible: b.offsetWidth > 0 && b.offsetHeight > 0
+                    }))
+                  );
+                  
+                  // Try to find the download button or link
+                  const downloadBtn = buttons.find(b => 
+                    (b.textContent.trim().toLowerCase().includes('64-bit download') || 
+                     b.textContent.trim().toLowerCase().includes('download')) && 
+                    b.offsetWidth > 0 && b.offsetHeight > 0
+                  );
+                  
+                  if (downloadBtn) {
+                    console.log('Found download button/link:', downloadBtn.id || 'no-id');
+                    // Return href for anchor tags
+                    if (downloadBtn.tagName === 'A' && downloadBtn.href) {
+                      return downloadBtn.href;
+                    }
+                    // Return value attribute for buttons
+                    else if (downloadBtn.tagName === 'BUTTON' && downloadBtn.value) {
+                      return downloadBtn.value;
+                    }
+                    // Try data attributes
+                    else if (downloadBtn.dataset && downloadBtn.dataset.url) {
+                      return downloadBtn.dataset.url;
+                    }
+                    // Last resort: Try to find a nearby link
+                    else {
+                      const parentElem = downloadBtn.parentElement;
+                      const nearbyLink = parentElem && parentElem.querySelector('a');
+                      return nearbyLink ? nearbyLink.href : null;
+                    }
+                  }
+                  
+                  // If no specific button found, look for any download links
+                  const downloadLinks = Array.from(document.querySelectorAll('a[href*="download"]'));
+                  if (downloadLinks.length > 0) {
+                    return downloadLinks[0].href;
+                  }
+                  
+                  return null;
+                });
+                
+                if (!downloadLink) {
+                  throw new Error('64-bit download link not found');
+                }
+                
+                console.log('Found download link:', downloadLink);
+              } catch (err) {
+                console.log('Error extracting download link:', err.message);
+                throw err;
+              }
+              
+              return downloadLink;
+            } catch (error) {
+              console.error('Error during scraping:', error);
+              // Take a screenshot of the error state
+              try {
+                const page = (await browser.pages())[0];
+                await page.screenshot({ path: 'error-state.png' });
+              } catch (e) {
+                console.error('Failed to take error screenshot:', e);
+              }
+              throw error;
+            } finally {
+              await browser.close();
             }
-            
-            const downloadLink = await getWindows11DownloadLink();
-            console.log(`Windows 11 download link: ${downloadLink}`);
-            
-            // Write the link to a file
-            const fs = require('fs');
-            fs.writeFileSync('windows11_download_link.txt', downloadLink);
-            
-            // Set output for use in other steps
-            return downloadLink;
+          }
+          
+          // Run the scraper
+          getWindows11DownloadLink()
+            .then(downloadLink => {
+              console.log(`Windows 11 download link: ${downloadLink}`);
+              fs.writeFileSync('windows11_download_link.txt', downloadLink || 'Link not found');
+            })
+            .catch(error => {
+              console.error('Scraper failed:', error);
+              process.exit(1);
+            });
+          EOF
+
+      - name: Run scraper
+        id: run-scraper
+        run: node scraper.js
+        
+      - name: Upload screenshot artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: screenshots
+          path: |
+            *.png
             
       - name: Update link in repository
         run: |
-          git config --global user.name "GitHub Actions Bot"
-          git config --global user.email "actions@github.com"
-          git add windows11_download_link.txt
-          git commit -m "Update Windows 11 download link" || echo "No changes to commit"
-          git push
+          if [ -f windows11_download_link.txt ] && [ -s windows11_download_link.txt ]; then
+            git config --global user.name "GitHub Actions Bot"
+            git config --global user.email "actions@github.com"
+            git add windows11_download_link.txt
+            git commit -m "Update Windows 11 download link" || echo "No changes to commit"
+            git push
+          else
+            echo "Download link file missing or empty"
+            exit 1
+          fi
           
-      - name: Set output
-        id: set-link
-        run: echo "::set-output name=download_link::$(cat windows11_download_link.txt)"
-        
       - name: Output download link
         run: |
-          echo "Windows 11 download link has been updated."
-          echo "Link: ${{ steps.set-link.outputs.download_link }}"
+          if [ -f windows11_download_link.txt ]; then
+            echo "Windows 11 download link has been updated."
+            echo "Link: $(cat windows11_download_link.txt)"
+          else
+            echo "Failed to retrieve download link"
+            exit 1
+          fi
