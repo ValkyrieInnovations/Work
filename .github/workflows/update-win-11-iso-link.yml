@@ -7,359 +7,59 @@ on:
 
 jobs:
   get-windows11-link:
-    runs-on: windows-latest  # Using Windows runner for better Edge WebDriver support
+    runs-on: windows-latest  # Using Windows runner for better PowerShell support
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         
-      - name: Install WebDriver for Edge
-        shell: powershell
+      - name: Download Fido Script
         run: |
-          # Create directory for WebDriver
-          New-Item -Path "C:\WebDriver" -ItemType Directory -Force
+          # Create directory for scripts
+          New-Item -Path "scripts" -ItemType Directory -Force
           
-          # Get Edge version
-          $edgeVersion = (Get-AppxPackage -Name *Edge*).Version
-          Write-Host "Microsoft Edge version: $edgeVersion"
+          # Download Fido.ps1 from the official repository
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/pbatard/Fido/master/Fido.ps1" -OutFile "scripts\Fido.ps1"
           
-          # Download Edge WebDriver that matches the installed Edge version
-          $webDriverUrl = "https://msedgedriver.azureedge.net/$edgeVersion/edgedriver_win64.zip"
-          $webDriverZip = "C:\WebDriver\edgedriver_win64.zip"
-          
-          try {
-            Invoke-WebRequest -Uri $webDriverUrl -OutFile $webDriverZip
-          } catch {
-            # If exact version doesn't work, get the latest stable
-            Write-Host "Could not find exact WebDriver version, falling back to latest stable"
-            $webDriverUrl = "https://msedgedriver.azureedge.net/LATEST_STABLE/edgedriver_win64.zip"
-            Invoke-WebRequest -Uri $webDriverUrl -OutFile $webDriverZip
-          }
-          
-          # Extract the WebDriver
-          Expand-Archive -Path $webDriverZip -DestinationPath "C:\WebDriver" -Force
-          
-          # Add WebDriver to PATH
-          echo "C:\WebDriver" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          
-          # Verify WebDriver is available
-          $driverPath = "C:\WebDriver\msedgedriver.exe"
-          if (Test-Path $driverPath) {
-            Write-Host "Edge WebDriver installed successfully at: $driverPath"
+          # Verify the script was downloaded
+          if (Test-Path "scripts\Fido.ps1") {
+            Write-Host "Fido script downloaded successfully"
           } else {
-            Write-Host "Error: Edge WebDriver not found"
+            Write-Error "Failed to download Fido script"
             exit 1
           }
       
-      - name: Install Selenium PowerShell Module
-        shell: powershell
+      - name: Get Windows 11 Download Link
+        id: get_link
         run: |
-          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name Selenium -Force -AllowClobber
-          Write-Host "Selenium PowerShell module installed successfully"
+          # Change to scripts directory
+          Set-Location scripts
+          
+          # Run Fido script to get Windows 11 download link
+          # -Win 11 specifies Windows 11
+          # -Rel "Latest" gets the latest release
+          # -Lang "English" for English language
+          # -Ed "Pro" for Windows 11 Pro edition
+          # -GetUrl to only get the URL without downloading
+          $downloadUrl = (& .\Fido.ps1 -Win 11 -Rel "Latest" -Lang "English" -Ed "Pro" -GetUrl)
+          
+          # Output the result for debugging
+          Write-Host "Download URL: $downloadUrl"
+          
+          # Save the URL to a file
+          $downloadUrl | Out-File -FilePath "windows11_download_link.txt" -Force
+          
+          # Set output variable for use in subsequent steps
+          "download_link=$downloadUrl" >> $env:GITHUB_OUTPUT
       
-      - name: Execute Selenium Script to Get Windows 11 Download Link
-        shell: powershell
+      - name: Create Helper PowerShell Script
         run: |
-          $scriptContent = @'
-          # PowerShell script to get Windows 11 download link using Selenium
-          
-          # Import the Selenium module
-          Import-Module Selenium
-          
-          # Set up logging
-          function Write-Log {
-              param([string]$message)
-              $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-              Write-Host "$timestamp - $message"
-          }
-          
-          Write-Log "Starting Windows 11 download link retrieval"
-          
-          try {
-              # Set up Edge options for headless mode
-              $edgeOptions = New-Object OpenQA.Selenium.Edge.EdgeOptions
-              $edgeOptions.AddArgument('--headless')
-              $edgeOptions.AddArgument('--no-sandbox')
-              $edgeOptions.AddArgument('--disable-dev-shm-usage')
-              $edgeOptions.AddArgument('--disable-gpu')
-              $edgeOptions.AddArgument('--window-size=1920,1080')
-              
-              # Launch Edge in headless mode
-              Write-Log "Starting Edge WebDriver in headless mode"
-              $driver = New-Object OpenQA.Selenium.Edge.EdgeDriver($edgeOptions)
-              
-              # Set an implicit wait to give elements time to load
-              $driver.Manage().Timeouts().ImplicitWait = [TimeSpan]::FromSeconds(10)
-              
-              # Navigate to the Windows 11 download page
-              $url = "https://www.microsoft.com/en-us/software-download/windows11"
-              Write-Log "Navigating to: $url"
-              $driver.Navigate().GoToUrl($url)
-              
-              # Wait for page to load
-              Start-Sleep -Seconds 5
-              
-              # Scroll down to make the dropdown visible
-              Write-Log "Scrolling down to make elements visible"
-              $driver.ExecuteScript("window.scrollBy(0, 500)")
-              Start-Sleep -Seconds 2
-              
-              # Find and interact with the select dropdown
-              try {
-                  Write-Log "Looking for the product selection dropdown"
-                  $selectElements = $driver.FindElements([OpenQA.Selenium.By]::TagName("select"))
-                  
-                  if ($selectElements.Count -eq 0) {
-                      throw "No select elements found on the page"
-                  }
-                  
-                  Write-Log "Found $($selectElements.Count) select elements"
-                  
-                  # Select the first dropdown (product selection)
-                  $selectElement = $selectElements[0]
-                  $select = [OpenQA.Selenium.Support.UI.SelectElement]::new($selectElement)
-                  
-                  # Find and select the Windows 11 option
-                  $options = $select.Options
-                  
-                  Write-Log "Available options:"
-                  foreach ($option in $options) {
-                      Write-Log "  - $($option.Text)"
-                  }
-                  
-                  $win11Option = $options | Where-Object { $_.Text -like "*Windows 11*" -and $_.Text -like "*multi-edition*" -and $_.Text -like "*x64*" }
-                  
-                  if ($win11Option) {
-                      Write-Log "Selecting option: $($win11Option.Text)"
-                      $select.SelectByText($win11Option.Text)
-                      Start-Sleep -Seconds 3
-                  } else {
-                      throw "Windows 11 x64 option not found in dropdown"
-                  }
-                  
-                  # Find and click the Download button
-                  Write-Log "Looking for the Download button"
-                  $downloadButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), 'Download')]"))
-                  
-                  if ($downloadButtons.Count -eq 0) {
-                      throw "Download button not found"
-                  }
-                  
-                  Write-Log "Clicking Download button"
-                  $downloadButtons[0].Click()
-                  Start-Sleep -Seconds 3
-                  
-                  # Select language (English United States)
-                  Write-Log "Looking for language dropdown"
-                  $languageSelects = $driver.FindElements([OpenQA.Selenium.By]::TagName("select"))
-                  
-                  if ($languageSelects.Count -eq 0) {
-                      throw "Language dropdown not found"
-                  }
-                  
-                  $languageSelect = [OpenQA.Selenium.Support.UI.SelectElement]::new($languageSelects[0])
-                  
-                  # Find and select English (United States)
-                  $engOption = $languageSelect.Options | Where-Object { $_.Text -like "*English*" -and $_.Text -like "*United States*" }
-                  
-                  if ($engOption) {
-                      Write-Log "Selecting language: $($engOption.Text)"
-                      $languageSelect.SelectByText($engOption.Text)
-                      Start-Sleep -Seconds 3
-                  } else {
-                      throw "English (United States) option not found"
-                  }
-                  
-                  # Click the Confirm button
-                  Write-Log "Looking for Confirm button"
-                  $confirmButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), 'Confirm')]"))
-                  
-                  if ($confirmButtons.Count -eq 0) {
-                      throw "Confirm button not found"
-                  }
-                  
-                  Write-Log "Clicking Confirm button"
-                  $confirmButtons[0].Click()
-                  Start-Sleep -Seconds 5
-                  
-                  # Find the 64-bit download button and get its URL
-                  Write-Log "Looking for 64-bit download button"
-                  $downloadLink = $null
-                  
-                  # Try a few different ways to locate the download button/link
-                  $downloadButtons = $driver.FindElements([OpenQA.Selenium.By]::XPath("//button[contains(text(), '64-bit Download')]"))
-                  
-                  if ($downloadButtons.Count -gt 0) {
-                      $downloadButton = $downloadButtons[0]
-                      
-                      # Try to get the URL from button value
-                      $downloadLink = $downloadButton.GetAttribute("value")
-                      Write-Log "Found download button with value attribute: $downloadLink"
-                      
-                      # If value attribute doesn't contain a URL, try other attributes
-                      if (-not ($downloadLink -like "https://*")) {
-                          $downloadLink = $downloadButton.GetAttribute("data-url")
-                          Write-Log "Tried data-url attribute: $downloadLink"
-                      }
-                      
-                      # If still no valid URL, try to click the button and catch the navigation
-                      if (-not ($downloadLink -like "https://*")) {
-                          Write-Log "No direct URL found on button. Attempting to click and monitor network"
-                          
-                          # Use JavaScript to extract network requests
-                          $script = @"
-                          let downloadUrl = null;
-                          
-                          // Create a MutationObserver to watch for changes
-                          const observer = new MutationObserver(mutations => {
-                              for (let mutation of mutations) {
-                                  if (mutation.type === 'attributes' && mutation.attributeName === 'href') {
-                                      const link = mutation.target;
-                                      if (link.href && link.href.startsWith('https://') && link.href.includes('download.microsoft.com')) {
-                                          downloadUrl = link.href;
-                                      }
-                                  }
-                              }
-                          });
-                          
-                          // Start observing the document
-                          observer.observe(document, { 
-                              attributes: true, 
-                              childList: true, 
-                              subtree: true 
-                          });
-                          
-                          // Click the download button
-                          document.querySelector('button[id*="64-bit-download"]').click();
-                          
-                          // Wait a moment to capture the URL
-                          setTimeout(() => {
-                              observer.disconnect();
-                          }, 2000);
-                          
-                          return downloadUrl;
-                          "@
-                          
-                          # Execute the JavaScript and wait for result
-                          $downloadLink = $driver.ExecuteScript($script)
-                          Start-Sleep -Seconds 3
-                          
-                          Write-Log "JavaScript method result: $downloadLink"
-                      }
-                  }
-                  
-                  # If we still don't have a link, try to find it in the page HTML
-                  if (-not ($downloadLink -like "https://*")) {
-                      Write-Log "Attempting to extract link from page source"
-                      $pageSource = $driver.PageSource
-                      
-                      # Look for download URLs in the page source
-                      $matches = [regex]::Matches($pageSource, 'https://[^"\''\s]+download[^"\''\s]*')
-                      
-                      if ($matches.Count -gt 0) {
-                          foreach ($match in $matches) {
-                              $potentialLink = $match.Value
-                              if ($potentialLink -like "*download.microsoft.com*" -or 
-                                  $potentialLink -like "*software-download.microsoft.com*" -or
-                                  $potentialLink -like "*software-static.download.prss.microsoft.com*") {
-                                  $downloadLink = $potentialLink
-                                  Write-Log "Found potential download link in page source: $downloadLink"
-                                  break
-                              }
-                          }
-                      }
-                  }
-                  
-                  # Save the download link to a file
-                  if ($downloadLink -like "https://*") {
-                      Write-Log "Successfully retrieved Windows 11 download link: $downloadLink"
-                      $downloadLink | Out-File -FilePath "windows11_download_link.txt"
-                      Write-Host "::set-output name=download_link::$downloadLink"
-                  } else {
-                      throw "Could not retrieve a valid download link"
-                  }
-                  
-              } catch {
-                  Write-Log "Error during dropdown interaction: $_"
-                  # Take screenshot for debugging
-                  $driver.GetScreenshot().SaveAsFile("error_screenshot.png")
-                  throw $_
-              }
-              
-          } catch {
-              Write-Log "Error: $_"
-              if ($driver -ne $null) {
-                  $driver.GetScreenshot().SaveAsFile("error_screenshot.png")
-              }
-              throw
-          } finally {
-              # Always close the driver
-              if ($driver -ne $null) {
-                  $driver.Quit()
-                  $driver.Dispose()
-              }
-              Write-Log "Script execution completed"
-          }
-          '@
-          
-          Set-Content -Path ".\get_windows11_link.ps1" -Value $scriptContent
-          
-          # Execute the script
-          .\get_windows11_link.ps1
-      
-      - name: Upload screenshot if error
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-screenshots
-          path: error_screenshot.png
-          if-no-files-found: ignore
-      
-      - name: Update repository with download link
-        run: |
-          if (Test-Path "windows11_download_link.txt") {
-            $downloadLink = Get-Content "windows11_download_link.txt"
-            
-            if ($downloadLink -like "https://*") {
-              Write-Host "Successfully retrieved Windows 11 download link: $downloadLink"
-              
-              # Configure Git
-              git config --global user.name "GitHub Actions Bot"
-              git config --global user.email "actions@github.com"
-              
-              # Add, commit and push changes
-              git add windows11_download_link.txt
-              git commit -m "Update Windows 11 download link" -m "Automated update via GitHub Actions"
-              git push
-              
-              # Create a PowerShell script to use the link
-              $helperScript = @"
+          $downloadLink = Get-Content "scripts\windows11_download_link.txt"
+          $helperScript = @"
           # Windows 11 Download Helper Script
           # Generated by GitHub Action on $(Get-Date -Format "yyyy-MM-dd")
           
-          # The following link is valid for approximately 24 hours:
+          # The following link is direct from Microsoft and valid long-term:
           `$downloadURL = "$downloadLink"
-          
-          # Validate URL is still valid
-          try {
-              `$request = [System.Net.WebRequest]::Create(`$downloadURL)
-              `$request.Method = "HEAD"
-              `$response = `$request.GetResponse()
-              
-              if (`$response.StatusCode -eq "OK") {
-                  Write-Host "Link is valid. You can download Windows 11 ISO using this URL."
-                  `$response.Close()
-              } else {
-                  Write-Host "Link appears to be expired. Please generate a new link."
-                  `$response.Close()
-                  exit 1
-              }
-          } catch {
-              Write-Host "Link appears to be expired or invalid: `$(`$_.Exception.Message)"
-              Write-Host "Please generate a new link using the GitHub Action."
-              exit 1
-          }
           
           # Ask user if they want to download the ISO
           `$downloadISO = Read-Host "Do you want to download Windows 11 ISO now? (Y/N)"
@@ -423,15 +123,30 @@ jobs:
                   exit 1
               }
           } else {
-              Write-Host "Download canceled. You can download later using the URL above."
+              Write-Host "Download canceled. You can download manually using the URL above."
           }
           "@
+          
+          Set-Content -Path "download_windows11.ps1" -Value $helperScript
+      
+      - name: Update repository with download link
+        run: |
+          if (Test-Path "scripts\windows11_download_link.txt") {
+            $downloadLink = Get-Content "scripts\windows11_download_link.txt"
+            
+            if ($downloadLink -like "http*") {
+              Write-Host "Successfully retrieved Windows 11 download link: $downloadLink"
               
-              Set-Content -Path "download_windows11.ps1" -Value $helperScript
+              # Copy the link file to the repository root
+              Copy-Item "scripts\windows11_download_link.txt" -Destination "windows11_download_link.txt" -Force
               
-              # Add the helper script to the repo
-              git add download_windows11.ps1
-              git commit -m "Update Windows 11 download helper script" -m "Automated update via GitHub Actions"
+              # Configure Git
+              git config --global user.name "GitHub Actions Bot"
+              git config --global user.email "actions@github.com"
+              
+              # Add, commit and push changes
+              git add windows11_download_link.txt download_windows11.ps1
+              git commit -m "Update Windows 11 download link" -m "Automated update via GitHub Actions"
               git push
             } else {
               Write-Host "Error: Retrieved link does not appear to be valid: $downloadLink"
@@ -442,9 +157,11 @@ jobs:
             exit 1
           }
       
-      - name: Upload helper script as artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Windows11-Download-Helper
-          path: download_windows11.ps1
+          path: |
+            download_windows11.ps1
+            scripts/windows11_download_link.txt
           if-no-files-found: warn
